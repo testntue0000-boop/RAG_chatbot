@@ -1,65 +1,152 @@
-# 國立臺北教育大學教務處法規知識庫助理 (NTUE RAG)
+# 國立臺北教育大學 教務處法規知識庫助理
 
-這是一個基於 RAG (Retrieval-Augmented Generation) 架構的問答系統，使用 LangChain、FAISS 與 GPT-4o-mini 模型，來協助查詢國立臺北教育大學（NTUE）教務處的相關法規。
+以 RAG（Retrieval-Augmented Generation）架構建立的教務法規問答系統，支援自然語言查詢教務處相關法規與辦理流程，部署於 Render。
 
-## 📁 專案檔案結構
+---
 
-- `app.py`: Streamlit 網頁應用程式主程式（提供對話介面）。
-- `build_index.py`: 讀取 PDF、進行文字切塊並建立 FAISS 向量資料庫的腳本。
-- `download_pdfs.py`: 批次從國北教大教務處網站下載最新法規 PDF 的爬蟲腳本。
-- `requirements.txt`: 專案執行所需的 Python 套件清單。
-- `.gitignore`: Git 忽略清單，確保機密資訊與快取不被推送到遠端。
+## 系統架構
 
-## 🚀 安裝與執行步驟
+```
+PDF 法規文件（87 份）
+        ↓
+  pdfplumber 文字提取 + 清理
+        ↓
+  LangChain RecursiveCharacterTextSplitter
+  （chunk_size=500, overlap=100）
+        ↓
+  OpenAI text-embedding-3-small 向量化
+        ↓
+  FAISS 本地向量資料庫
+        ↓
+使用者提問
+  → MMR 向量搜尋（Top-5 相關段落）
+  → GPT-4o-mini 生成回答
+  → Streamlit 前端顯示
+```
 
-### 1. 安裝依賴套件
-請確保您的環境中已啟用虛擬環境（如 `ntuerag`），接著安裝所需套件：
+---
+
+## 功能
+
+- 查詢學則、選課、畢業審核、轉系、輔系雙主修、招生、成績、學雜費等法規
+- 四種使用者身份：在校學生、教職人員／行政、考生／準新生、研究生
+- 快速提問按鈕引導常見問題
+- 對話記憶，支援多輪追問（保留最近 5 輪）
+- MMR 檢索確保回答橫跨多份文件，不重複引用
+
+---
+
+## 專案結構
+
+```
+RAG_chatbot/
+├── app.py                # Streamlit 主應用程式
+├── build_index.py        # 建立 FAISS 向量庫（執行一次）
+├── download_pdfs.py      # 批次下載 PDF 法規文件
+├── Dockerfile            # Render 容器部署設定
+├── requirements.txt      # 鎖定版本的套件清單
+├── .gitignore
+├── README.md
+├── regulations/          # PDF 法規文件（不納入版控）
+└── faiss_index/          # FAISS 向量庫（納入版控供 Render 使用）
+```
+
+---
+
+## 環境需求
+
+- Python 3.11
+- OpenAI API 金鑰（需開通 `text-embedding-3-small` 與 `gpt-4o-mini` 的使用權限）
+
+---
+
+## 本地執行
+
+### 1. 安裝套件
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 設定環境變數
+### 2. 設定 API 金鑰
 
-在專案根目錄建立一個 `.env` 檔案，並填入您的 OpenAI API Key：
+```bash
+# Windows
+copy .env.example .env
 
-```env
-OPENAI_API_KEY=sk-your-openai-api-key
+# Mac / Linux
+cp .env.example .env
 ```
 
-### 3. 獲取法規 PDF 檔案
+編輯 `.env`，填入 OpenAI API 金鑰：
 
-為了維持 GitHub 儲存庫的輕量化，本專案預設不上傳 PDF 檔案。請先執行下載腳本，腳本會自動將檔案下載並存放至 `regulations/` 資料夾中：
+```
+OPENAI_API_KEY=sk-你的金鑰
+```
+
+### 3. 下載法規 PDF
 
 ```bash
 python download_pdfs.py
 ```
 
-*(備註：部分檔案如「音樂學系學士班單獨招生規定」因存放在 Google Drive，若腳本無法下載，請依終端機提示手動下載並放入 `regulations/` 資料夾)*
+PDF 會下載至 `regulations/` 資料夾（共 87 份）。
 
-### 4. 建立 FAISS 向量資料庫
+> ⚠️ 音樂學系學士班單獨招生規定存放於 Google Drive，腳本無法自動下載。
+> 請手動下載後命名為 `音樂學系學士班單獨招生規定.pdf` 並放入 `regulations/`。
 
-準備好 PDF 檔案後，請執行以下腳本將法規文字轉換為向量（只需執行一次，或在法規更新時執行）：
+### 4. 建立向量庫
 
 ```bash
 python build_index.py
 ```
 
-執行完成後，根目錄會生成 `faiss_index/` 資料夾。
+首次執行約需 1～2 分鐘，完成後產生 `faiss_index/` 資料夾。向量庫只需建立一次，新增或更新法規後重新執行即可。
 
-### 5. 啟動 Streamlit 應用程式
-
-啟動法規助理的網頁介面：
+### 5. 啟動應用程式
 
 ```bash
 streamlit run app.py
 ```
 
-執行後，瀏覽器將自動開啟對話介面（預設為 `http://localhost:8501`）。
+開啟瀏覽器至 `http://localhost:8501`。
 
-## ⚠️ 注意事項
+---
 
-* 包含法規原始檔的 `regulations/` 、建置好的向量庫 `faiss_index/` 以及機密金鑰 `.env` 均已加入 `.gitignore` 排除清單，請勿將這些檔案上傳至任何公開的版本控制系統中。
+## 部署（Render）
 
-```
-存檔後，您就可以繼續執行 `git add .`、`git commit` 跟 `git push` 把程式碼推送到您的 Git 儲存庫
-```
+本專案已包含 `Dockerfile`，Render 會自動偵測並使用容器部署。
+
+### 步驟
+
+1. 將專案 push 至 GitHub
+2. 前往 [Render Dashboard](https://dashboard.render.com/)，新建 **Web Service**
+3. 連結 GitHub repo，Render 會自動偵測 `Dockerfile`
+4. 在 **Environment** 頁面加入環境變數：
+   ```
+   OPENAI_API_KEY=sk-你的金鑰
+   ```
+5. 點擊 **Manual Deploy** 觸發部署
+
+> ⚠️ `faiss_index/` 已納入版控，Render 部署時會直接使用。
+> 若法規更新需重建向量庫，請在本地執行 `build_index.py` 後重新 push。
+
+---
+
+## 注意事項
+
+- `.env` 含有 API 金鑰，已加入 `.gitignore`，**絕對不可推送至公開儲存庫**
+- `regulations/` 含有受版權保護的 PDF，已加入 `.gitignore`
+- LangChain 套件版本已鎖定（`requirements.txt` 使用 `==`），升級前請先在本地測試
+
+---
+
+## 技術選型
+
+| 項目 | 選擇 | 原因 |
+|------|------|------|
+| Embedding | `text-embedding-3-small` | 繁中支援佳，比 ada-002 準確且便宜 5 倍 |
+| LLM | `gpt-4o-mini` | 速度快、成本低，temperature=0.1 確保法規回答精確 |
+| 向量庫 | FAISS（本地） | 無需額外服務，87 份文件規模完全適用 |
+| 檢索策略 | MMR（k=5） | 確保取回段落來自不同條文，避免重複引用 |
+| 切塊大小 | 500 字 / 重疊 100 字 | 符合法規條文一條一義的結構 |
