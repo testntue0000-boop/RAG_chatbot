@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 import streamlit as st
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
+# from langchain.chains import ConversationalRetrievalChain
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 
@@ -76,19 +79,13 @@ SYSTEM_PROMPT = """你是「國立臺北教育大學（NTUE）教務處數位法
 【參考法規段落】
 {context}
 
-【對話紀錄】
-{chat_history}
-
-【使用者問題】
-{question}
-
 【回答】"""
 
 
 @st.cache_resource(show_spinner=False)
 def load_chain():
     if not INDEX_DIR.exists():
-        return None
+        return None, None
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     vectorstore = FAISS.load_local(
         str(INDEX_DIR), embeddings, allow_dangerous_deserialization=True
@@ -98,20 +95,26 @@ def load_chain():
         search_kwargs={"k": TOP_K, "fetch_k": 20, "lambda_mult": 0.7},
     )
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, max_tokens=800)
+    
+    # 建立適合新版 RAG 的 ChatPrompt
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+    ])
+    
+    # 明確定義記憶體
     memory = ConversationBufferWindowMemory(
         k=WINDOW_K, memory_key="chat_history",
         return_messages=True, output_key="answer",
     )
-    prompt = PromptTemplate(
-        input_variables=["context", "chat_history", "question"],
-        template=SYSTEM_PROMPT,
-    )
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=llm, retriever=retriever, memory=memory,
-        combine_docs_chain_kwargs={"prompt": prompt},
-        return_source_documents=True, output_key="answer", verbose=False,
-    )
-    return chain
+    
+    # 建立新版文檔鏈與檢索鏈
+    question_answer_chain = create_stuff_documents_chain(llm, prompt)
+    chain = create_retrieval_chain(retriever, question_answer_chain)
+    
+    # 【關鍵修正】同時回傳 chain 與 memory，不要用外掛屬性的方式
+    return chain, memory
 
 
 def format_sources(source_docs: list) -> str:
@@ -294,7 +297,7 @@ st.divider()
 
 # ── 載入 RAG 鏈 ───────────────────────────────────
 with st.spinner("載入知識庫中..."):
-    chain = load_chain()
+    chain, memory = load_chain()
 
 if chain is None:
     st.error("尚未建立向量索引，請先執行：python build_index.py")
@@ -319,10 +322,30 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("查閱法規資料庫中..."):
             try:
-                result  = chain.invoke({"question": user_input})
+                # 【關鍵修正】直接從獨立的 memory 物件載入對話紀錄
+                memory_vars = memory.load_memory_variables({})
+                chat_history = memory_vars.get("chat_history", [])
+
+                # 呼叫時，傳入 input 與 chat_history
+                result  = chain.invoke({
+                    "input": user_input,
+                    "chat_history": chat_history
+                })
                 answer  = result["answer"]
-                sources = format_sources(result.get("source_documents", []))
+                sources = format_sources(result.get("context", []))
+                
+                # 【關鍵修正】直接呼叫獨立的 memory 物件儲存對話上下文
+                memory.save_context(
+                    {"input": user_input}, 
+                    {"answer": answer}
+                )
+                
                 st.markdown(answer)
+
+                if sources:
+                    with st.expander("📄 檢視官方參考法規來源"):
+                        for src in sources:
+                            st.write(f"• {src}")
 
                 st.session_state.messages.append({
                     "role": "assistant", "content": answer
@@ -373,7 +396,9 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ 清除對話紀錄", use_container_width=True):
         st.session_state.messages = []
-        chain.memory.clear()
+        # 【關鍵修正】直接對 memory 進行 clear
+        if memory:
+            memory.clear()
         st.rerun()
 
     st.markdown(
