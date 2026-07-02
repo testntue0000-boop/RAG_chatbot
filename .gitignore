@@ -1,0 +1,22 @@
+# 環境變數與機密資訊
+.env
+.env.*
+
+# Python 虛擬環境與快取
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# 下載的法規 PDF 與爬蟲紀錄
+regulations/
+download_failed.txt
+
+# 產生的向量資料庫
+faiss_index/
+
+# OS 系統檔案
+.DS_Store
+Thumbs.db
