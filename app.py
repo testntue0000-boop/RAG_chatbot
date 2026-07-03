@@ -551,7 +551,8 @@ with st.sidebar:
                         if ok:
                             st.session_state.index_version += 1
                             st.session_state.messages = []
-                            st.success(f"✅ 知識庫已更新！{msg}，系統將自動重新載入。")
+                            st.success(f"✅ 知識庫已更新！{msg}")
+                            st.rerun()
                         else:
                             st.error(f"❌ 更新失敗：{msg}")
                     elif not errors:
