@@ -1,4 +1,4 @@
-# 環境變數與機密資訊
+# 環境變數與機密資訊（絕對不可推送）
 .env
 .env.*
 
@@ -10,13 +10,18 @@ __pycache__/
 venv/
 env/
 
-# 下載的法規 PDF 與爬蟲紀錄
+# 下載的法規 PDF（受版權保護，檔案過大）
 regulations/
 download_failed.txt
-
-# 產生的向量資料庫
-faiss_index/
 
 # OS 系統檔案
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/secrets.toml
