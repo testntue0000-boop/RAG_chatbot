@@ -23,8 +23,10 @@ import docx
 
 load_dotenv()
 
-INDEX_DIR      = Path("faiss_index")
-REGULATIONS_DIR = Path("regulations")
+# Render 掛載 Disk 路徑（本地開發退回專案目錄）
+_DATA_DIR       = Path(os.environ.get("DATA_DIR", "."))
+INDEX_DIR       = _DATA_DIR / "faiss_index"
+REGULATIONS_DIR = _DATA_DIR / "regulations"
 TOP_K          = 5
 WINDOW_K       = 5
 CHUNK_SIZE     = 500
