@@ -192,7 +192,7 @@ def add_to_index(new_docs: list[Document]) -> tuple[bool, str]:
 # ── RAG 鏈 ────────────────────────────────────────
 
 @st.cache_resource(show_spinner=False)
-def load_chain():
+def load_chain(_version: int = 0):
     if not INDEX_DIR.exists():
         return None, None
     embeddings  = OpenAIEmbeddings(model="text-embedding-3-small")
@@ -308,7 +308,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Session State ──────────────────────────────────
-for key, val in [("messages", []), ("selected_role", "student"), ("pending_input", None)]:
+for key, val in [("messages", []), ("selected_role", "student"), ("pending_input", None), ("index_version", 0)]:
     if key not in st.session_state:
         st.session_state[key] = val
 
@@ -339,7 +339,7 @@ st.divider()
 
 # ── 載入 RAG 鏈 ───────────────────────────────────
 with st.spinner("載入知識庫中..."):
-    chain, memory = load_chain()
+    chain, memory = load_chain(st.session_state.index_version)
 
 if chain is None:
     st.error("尚未建立向量索引，請先執行：python build_index.py")
@@ -494,8 +494,9 @@ with st.sidebar:
                         with st.spinner("更新知識庫中（約 10～30 秒）..."):
                             ok, msg = add_to_index(new_docs)
                         if ok:
-                            st.success(f"✅ 知識庫已更新！{msg}")
-                            st.info("請重新整理頁面以載入新知識庫")
+                            st.session_state.index_version += 1
+                            st.session_state.messages = []
+                            st.success(f"✅ 知識庫已更新！{msg}，系統將自動重新載入。")
                         else:
                             st.error(f"❌ 更新失敗：{msg}")
                     elif not errors:
