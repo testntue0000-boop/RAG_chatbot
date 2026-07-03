@@ -111,35 +111,90 @@ def parse_pdf(file_path: Path, doc_type: str = "regulation") -> list[Document]:
 
 
 def parse_docx(file_path: Path, doc_type: str = "qa") -> list[Document]:
-    """解析 DOCX，QA 格式：每個 Q+A 配對當一塊，不再切割"""
+    """解析 DOCX
+    QA 格式支援兩種：
+      1. 表格格式（大分類 / 小分類 / Q問 / A答）→ 每列一塊
+      2. 文字格式（Q: ... A: ...）→ 每組一塊
+    """
     d = docx.Document(str(file_path))
-    full_text = "\n".join(p.text for p in d.paragraphs if p.text.strip())
-    full_text = clean_text(full_text)
 
-    if doc_type == "qa":
-        # 嘗試依 Q: / A: 切割成配對塊
+    if doc_type != "qa":
+        full_text = clean_text("\n".join(p.text for p in d.paragraphs if p.text.strip()))
+        return [Document(
+            page_content=full_text,
+            metadata={"source": file_path.name, "page": 1, "type": doc_type}
+        )]
+
+    docs = []
+
+    # 方式 1：表格格式（優先）
+    for table in d.tables:
+        cols = len(table.columns)
+        for row_idx, row in enumerate(table.rows):
+            cells = [c.text.strip() for c in row.cells]
+            if row_idx == 0:
+                continue  # 跳過標題列
+
+            if cols >= 4:
+                # 4欄：大分類、小分類、Q問、A答
+                big_cat = cells[0] if cells[0] else ""
+                sub_cat = cells[1] if len(cells) > 1 else ""
+                q_text  = cells[2] if len(cells) > 2 else ""
+                a_text  = cells[3] if len(cells) > 3 else ""
+            elif cols == 2:
+                # 2欄：Q問、A答
+                big_cat, sub_cat = "", ""
+                q_text = cells[0]
+                a_text = cells[1] if len(cells) > 1 else ""
+            else:
+                continue
+
+            if not q_text or not a_text:
+                continue
+            # 過濾表格標題列（內容為欄位名稱的列）
+            if q_text in ("Q問", "Q", "問題") and a_text in ("A答", "A", "答案"):
+                continue
+
+            # 每個 QA 列組成一塊，加上分類 context
+            content_parts = []
+            if big_cat:
+                content_parts.append(f"類別：{big_cat}" + (f" > {sub_cat}" if sub_cat else ""))
+            content_parts.append(f"問：{q_text}")
+            content_parts.append(f"答：{a_text}")
+            block = "\n".join(content_parts)
+
+            docs.append(Document(
+                page_content="[QA] " + clean_text(block),
+                metadata={
+                    "source":   file_path.name,
+                    "page":     row_idx,
+                    "type":     "qa",
+                    "category": big_cat,
+                }
+            ))
+
+    # 方式 2：純文字 Q: A: 格式（表格為空時使用）
+    if not docs:
+        full_text = clean_text("\n".join(p.text for p in d.paragraphs if p.text.strip()))
         blocks = re.split(r"(?=^Q[:：])", full_text, flags=re.MULTILINE)
-        docs = []
         for block in blocks:
             block = block.strip()
-            if not block:
+            if not block or len(block) < 10:
                 continue
             docs.append(Document(
                 page_content="[QA] " + block,
                 metadata={"source": file_path.name, "page": 1, "type": "qa"}
             ))
-        # 如果沒有 Q: 格式，整份當一塊
-        if not docs:
-            docs = [Document(
-                page_content="[QA] " + full_text,
-                metadata={"source": file_path.name, "page": 1, "type": "qa"}
-            )]
-        return docs
-    else:
-        return [Document(
-            page_content=full_text,
-            metadata={"source": file_path.name, "page": 1, "type": doc_type}
+
+    # 兩種格式都沒有→整份當一塊
+    if not docs:
+        full_text = clean_text("\n".join(p.text for p in d.paragraphs if p.text.strip()))
+        docs = [Document(
+            page_content="[QA] " + full_text,
+            metadata={"source": file_path.name, "page": 1, "type": "qa"}
         )]
+
+    return docs
 
 
 def parse_txt(file_path: Path, doc_type: str = "regulation") -> list[Document]:
