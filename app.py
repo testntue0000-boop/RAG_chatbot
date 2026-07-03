@@ -149,41 +149,42 @@ def parse_txt(file_path: Path, doc_type: str = "regulation") -> list[Document]:
     )]
 
 
-def rebuild_index(extra_docs: list[Document] | None = None):
-    """重建 FAISS 向量庫，extra_docs 為新上傳的文件"""
+def add_to_index(new_docs: list[Document]) -> tuple[bool, str]:
+    """增量更新：只向量化新文件，加進現有 index，不重建全部"""
+    if not new_docs:
+        return False, "沒有新文件"
+
+    if not INDEX_DIR.exists():
+        return False, "找不到現有向量庫，請先執行 build_index.py"
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP,
         separators=["\n\n", "\n", "。", "；", "，", " ", ""],
     )
 
-    all_docs = []
+    # QA 不切塊，法規文件切塊
+    qa_docs  = [d for d in new_docs if d.metadata.get("type") == "qa"]
+    reg_docs = [d for d in new_docs if d.metadata.get("type") != "qa"]
+    chunks   = splitter.split_documents(reg_docs) + qa_docs
 
-    # 載入現有 regulations/
-    if REGULATIONS_DIR.exists():
-        for pdf in sorted(REGULATIONS_DIR.glob("*.pdf")):
-            all_docs.extend(parse_pdf(pdf))
-
-    # 加入新上傳文件
-    if extra_docs:
-        all_docs.extend(extra_docs)
-
-    if not all_docs:
-        return False, "沒有任何文件可以處理"
-
-    # QA 文件不切塊，法規文件切塊
-    qa_docs  = [d for d in all_docs if d.metadata.get("type") == "qa"]
-    reg_docs = [d for d in all_docs if d.metadata.get("type") != "qa"]
-    chunks   = splitter.split_documents(reg_docs) + qa_docs  # QA 不切
+    if not chunks:
+        return False, "文件解析後無內容"
 
     embeddings  = OpenAIEmbeddings(model="text-embedding-3-small")
-    vectorstore = FAISS.from_documents(chunks, embeddings)
 
-    INDEX_DIR.mkdir(exist_ok=True)
+    # 載入現有 index 並增量加入
+    vectorstore = FAISS.load_local(
+        str(INDEX_DIR), embeddings, allow_dangerous_deserialization=True
+    )
+
+    # 分批送，每批 50 塊，避免超過 API token 限制
+    BATCH = 50
+    for i in range(0, len(chunks), BATCH):
+        vectorstore.add_documents(chunks[i:i + BATCH])
+
     vectorstore.save_local(str(INDEX_DIR))
-
-    # 清除快取，讓下次載入新的 index
     st.cache_resource.clear()
-    return True, f"完成，共處理 {len(chunks)} 個向量塊"
+    return True, f"已新增 {len(chunks)} 個向量塊至知識庫"
 
 
 # ── RAG 鏈 ────────────────────────────────────────
@@ -488,8 +489,8 @@ with st.sidebar:
                             st.warning(err)
 
                     if new_docs:
-                        with st.spinner("重建向量庫中（約 30 秒）..."):
-                            ok, msg = rebuild_index()
+                        with st.spinner("更新知識庫中（約 10～30 秒）..."):
+                            ok, msg = add_to_index(new_docs)
                         if ok:
                             st.success(f"✅ 知識庫已更新！{msg}")
                             st.info("請重新整理頁面以載入新知識庫")
